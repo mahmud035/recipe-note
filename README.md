@@ -7,7 +7,7 @@ real, non-technical user — a Bengali home cook on a phone — and run end-to-e
 inference budget**.
 
 - **Live app:** https://recipe-note-app.vercel.app
-- **Stack:** React 19 · TanStack Query v5 · Tailwind v4 · Express 5 · Mongoose 9 · Zod 4 · Gemini Flash · Puppeteer
+- **Stack:** React 19 · TanStack Query v5 · Tailwind v4 · Express 5 · Mongoose 9 · Zod 4 · Gemini Flash Lite · Puppeteer
 - **Status:** v1 (text-only extraction) in production
 
 ---
@@ -22,13 +22,14 @@ inference budget**.
 6. [Backend deep-dive](#backend-deep-dive)
 7. [Frontend deep-dive](#frontend-deep-dive)
 8. [Case study: the Bengali quantity formatter](#case-study-the-bengali-quantity-formatter)
-9. [The $0 constraint, defended in depth](#the-0-constraint-defended-in-depth)
-10. [Deployment topology](#deployment-topology)
-11. [Tech stack](#tech-stack)
-12. [Repository layout](#repository-layout)
-13. [Running it locally](#running-it-locally)
-14. [Trade-offs and what's deferred](#trade-offs-and-whats-deferred)
-15. [Roadmap](#roadmap)
+9. [Case study: the playlist-URL fix](#case-study-the-playlist-url-fix)
+10. [The $0 constraint, defended in depth](#the-0-constraint-defended-in-depth)
+11. [Deployment topology](#deployment-topology)
+12. [Tech stack](#tech-stack)
+13. [Repository layout](#repository-layout)
+14. [Running it locally](#running-it-locally)
+15. [Trade-offs and what's deferred](#trade-offs-and-whats-deferred)
+16. [Roadmap](#roadmap)
 
 ---
 
@@ -95,16 +96,27 @@ The spike is a throwaway measurement harness, not the app. For each test video i
 - **path B** — extract from the full video (audio **+** on-screen frames), labelling each quantity's
   source as `spoken` / `on_screen` / `inferred`.
 
-Then it scored the quantity-capture rate of A vs B and counted how many amounts came **only** from
-on-screen text — the amounts a transcript-only pipeline would silently lose.
+Then it scored the quantity-capture rate of A vs B and counted how many amounts path B attributed
+**only** to on-screen text — a first proxy for what a transcript-only pipeline might miss.
 
 **The gate:** build the core loop only if extraction captures most quantities _and the recipes are
 actually correct_. Otherwise, stop and rethink — no UI on top of a model that invents amounts.
 
-The spike came back green enough to ship **v1 as a text-only (transcript) pipeline**, with the
-multimodal path deferred but already designed for (see below). Crucially, the spike validated the
-prompts, the JSON shape, and the `RecipeExtractor` adapter seam — all of which carried into production
-**unchanged**. The experiment wasn't thrown away; it became the contract.
+**What the numbers actually said:** across the ten test videos, transcript-only (path A) captured
+**~85%** of ingredient quantities (203/238) and the full multimodal path (path B) captured **~87%**
+(213/244) — a **~2-point aggregate lift** that was _inconsistent_ across videos: roughly half were flat
+or slightly worse (one dropped from 63% to 33%), and only a single fast-cut video showed a real gain.
+And path B's own `on_screen` provenance labels proved unreliable — it repeatedly tagged quantities as
+on-screen that the audio plainly stated, over-attributing to the video, so the raw "on-screen-only"
+count overstates what a transcript actually misses.
+
+So v1 ships as a **text-only (transcript) pipeline** by deliberate choice, not a stopgap: a marginal,
+noisy ~2-point lift doesn't justify doubling the tokens (and the failure surface) per recipe, and
+shipping a second, less-trustworthy class of extraction cuts against the app's honest-blank-over-
+confident-wrong principle. The multimodal prompt and adapter stay written behind the seam for a
+possible later revisit — not a promised next step. Crucially, the spike validated the prompts, the JSON
+shape, and the `RecipeExtractor` adapter seam — all of which carried into production **unchanged**. The
+experiment wasn't thrown away; it became the contract.
 
 ---
 
@@ -223,6 +235,8 @@ in without touching the service. The extractor:
 
 - funnels **every** model call through one choke point with **exponential backoff** on 429 /
   rate-limit / transient 5xx errors (the free tier _will_ rate-limit — this is not optional);
+- runs every call at **`temperature: 0`**, so extraction is deterministic — the same transcript yields
+  the same recipe, and a retry is a true retry rather than a fresh roll of the dice;
 - requests **schema-enforced JSON** (`responseSchema`) with a defensive fence-stripping parser as a
   belt-and-suspenders fallback;
 - **Zod-validates** every recipe before it can be stored — a malformed recipe throws and is never
@@ -240,8 +254,9 @@ The free tier has a hard daily request cap. Blowing through it would lock the fa
    caller can't mint unlimited buckets.
 2. **Persistent daily budget guard** — a Mongo-backed counter bucketed by the _Pacific_ calendar date
    (matching Gemini's midnight-PT reset). A new job is refused **before** any spend if its projected cost
-   (2 calls/recipe) would exceed the ceiling. Persisting the counter in Mongo — not in memory — means a
-   redeploy can't silently reset the guard mid-day.
+   (2 calls/recipe) would exceed the ceiling. The counter increments via an atomic `$inc` upsert, so
+   concurrent jobs can't lose counts to a read-modify-write race. Persisting it in Mongo — not in
+   memory — means a redeploy can't silently reset the guard mid-day.
 
 ### PDF rendering
 
@@ -335,6 +350,38 @@ used wherever a constant must agree across the origin split (also the brand name
 
 ---
 
+## Case study: the playlist-URL fix
+
+A bug that only surfaced with a real user — found in the production logs, root-caused, and closed with a
+regression test. This is the "found, diagnosed, shipped" loop the whole project is built to support.
+
+**Symptom.** A pasted link would sometimes fail with the generic _"Could not extract a recipe from this
+video."_ — yet the same video, pasted another way, worked fine. The tell: the user copied links while a
+playlist was playing, so the URL carried a trailing `&list=…` param.
+
+**Root cause (from the logs).** Gemini fetches the video on Google's side. Handed a
+`watch?v=…&list=…` URL, its fetcher resolved the **playlist** — an HTML page — instead of the video and
+rejected it with `400 INVALID_ARGUMENT — Unsupported MIME type: text/html`. The URL validator was
+complicit: its regex checked the link's _shape_, but the trailing `(?:[?&#].*)?$` waved the playlist
+param straight through without ever stripping it.
+
+**The fix — two layers, defense in depth.** A pure
+[`canonicalizeYoutubeUrl`](server/src/modules/recipe/canonicalize-youtube-url.ts) util extracts the
+11-char video id from any common form (watch, `youtu.be`, shorts, live, embed; scheme optional) and
+rebuilds a clean `watch?v=<id>`, dropping `list` / `si` / `t` / `pp` / `index` / … . It's wired into the
+Zod schema as a `.transform()` (the shape regex stays as a cheap first gate), and — because a transform
+is worthless if the canonical value never reaches the service — `validateRequest` now writes the parsed
+body back to `req.body`. A second layer maps any _residual_ `INVALID_ARGUMENT` (a genuinely private,
+removed, or overlong video) to a specific access message instead of the catch-all. Like the formatter,
+the util is a **byte-identical twin** on client and server.
+
+**Locked in.** The exact production failure — `watch?v=fPHxBQzaAzI&list=PLeGWWfn88-VM` — is now a unit
+test asserting it canonicalizes to the clean URL, alongside cases for every URL form and every reject
+path ([`canonicalize-youtube-url.test.ts`](server/src/modules/recipe/canonicalize-youtube-url.test.ts),
+[`validate-request.test.ts`](server/src/middleware/validate-request.test.ts)).
+
+---
+
 ## The $0 constraint, defended in depth
 
 | Pressure                                         | Defense                                                                                                                        |
@@ -377,6 +424,13 @@ git push (server/**)  ─►  GitHub Actions  ─►  build image  ─►  push 
 
 The whole environment **fails loud**: the server validates its env with Zod at boot and `process.exit(1)`s
 on a bad config, so misconfiguration surfaces at startup, not mid-request.
+
+**A note on the two names.** The product is **recipe-note** (brand রাঁধুনি, live at
+`recipe-note-app.vercel.app`), but the server's deploy artifacts — the GHCR image
+(`ghcr.io/mahmud035/recipe-reel-server`), the Coolify resource, the tunnel route, and the CI secrets —
+are all named **recipe-reel**. The split is deliberate, not an oversight: those names are load-bearing
+wiring, so renaming would be a multi-point change across CI and infra for zero user benefit. The repo
+documents the seam rather than papering over it.
 
 ---
 
@@ -462,9 +516,11 @@ from the default (`gemini-3.1-flash-lite`).
 
 ## Trade-offs and what's deferred
 
-- **Text-only extraction (v1).** Quantities that appear _only_ on screen (and never spoken) are not
-  captured yet. The spike proved the multimodal lift exists; the multimodal prompt and adapter are already
-  written, just not wired into the core loop — a Phase 2 toggle behind the same `RecipeExtractor` seam.
+- **Text-only extraction (v1) — a measured choice.** Quantities that appear _only_ on screen (and never
+  spoken) aren't captured. The spike put the multimodal lift at ~2 aggregate percentage points, inconsistent
+  across videos — not worth doubling the token spend and the failure surface — so the multimodal prompt
+  and adapter stay written behind the same `RecipeExtractor` seam for a possible later revisit, not a
+  wired-up next step.
 - **Single in-process job runner.** No queue/worker — fine for a family-scale tool, and the startup
   orphan-sweep handles restarts. A real queue is the obvious scale-up step.
 - **No history / no auth.** Jobs auto-expire after 24 h; the app is intentionally stateless-feeling. No
@@ -477,7 +533,7 @@ from the default (`gemini-3.1-flash-lite`).
 
 ## Roadmap
 
-- **Phase 2:** wire the multimodal extractor (read on-screen amounts), gated behind a feature flag.
+- **Revisit multimodal** (reading on-screen amounts) behind a feature flag — but only if a larger, more consistent lift than the spike's ~2 percentage points justifies the extra token spend.
 - yt-dlp → Gemini File API fallback if Google meters the YouTube preview input.
 - Richer PDF layouts and optional recipe history once accounts are justified.
 

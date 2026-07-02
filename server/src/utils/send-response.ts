@@ -1,4 +1,4 @@
-import type { Response } from "express";
+import type { Response } from 'express';
 
 /** The response envelope returned by every JSON endpoint. */
 export interface ApiResponse<T> {
