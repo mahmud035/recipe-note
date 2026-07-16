@@ -472,6 +472,8 @@ recipe-note/
 │           ├── extractors/   Gemini adapter behind RecipeExtractor
 │           └── pdf/          Puppeteer render + Bengali font + formatter twin
 ├── spike/                  Phase 0 throwaway measurement harness (the bet)
+├── openspec/               spec-driven change workflow (config + specs/changes)
+├── .claude/                shared opsx commands + OpenSpec skills (personal overrides gitignored)
 └── .github/workflows/      server-only build → GHCR → Coolify
 ```
 
@@ -480,6 +482,11 @@ recipe-note/
 ## Running it locally
 
 Requires **Node 24+** (the server and spike run `.ts` directly — no build step in dev).
+
+```bash
+git clone https://github.com/mahmud035/recipe-note.git
+cd recipe-note
+```
 
 **1. Server**
 
