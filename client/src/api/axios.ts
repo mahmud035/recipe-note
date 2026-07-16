@@ -4,7 +4,6 @@ import axios from 'axios';
 // via VITE_API_BASE_URL (the server ORIGIN, no trailing /api). Unset in local dev → fall back to
 // the relative "/api" path, which the vite proxy forwards to the local server (vite.config.ts).
 const apiOrigin = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, '');
-console.log(apiOrigin);
 const baseURL = apiOrigin ? `${apiOrigin}/api` : '/api';
 
 /** Shared axios instance. All feature API calls go through this. */
