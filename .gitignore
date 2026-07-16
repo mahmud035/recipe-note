@@ -1,39 +1,68 @@
+# ============================================================
+# Dependencies
+# ============================================================
 node_modules/
-.env
-dist/
-spike/results.json
-spike/videos.json
-*.log
-.DS_Store
-
-# Env — catch variants, not just the bare name
-.env.*
-!.env.example
-client/.env.*
-server/.env.*
-!client/.env.example
-!server/.env.example
-
-# Build / coverage / cache
-coverage/
-*.tsbuildinfo
-.vite/
-
-# Editor
-.vscode/
-.idea/
-
-# OS
-Thumbs.db
-
 client/node_modules/
 server/node_modules/
 spike/node_modules/
 
+# ============================================================
+# Environment variables
+# Block all .env variants per workspace, then explicitly
+# un-ignore the example templates so they stay tracked.
+# ============================================================
+.env
+.env.*
+client/.env
+client/.env.*
+server/.env
+server/.env.*
+spike/.env
+spike/.env.*
+!.env.example
+!client/.env.example
+!server/.env.example
+
+# ============================================================
+# Build output
+# ============================================================
+dist/
 client/dist/
 server/dist/
 spike/dist/
+*.tsbuildinfo
+.vite/
 
-client/.env
-server/.env
-spike/.env
+# ============================================================
+# Test / coverage
+# ============================================================
+coverage/
+
+# ============================================================
+# Logs
+# ============================================================
+*.log
+
+# ============================================================
+# Spike — local experiment artifacts, not for version control
+# ============================================================
+spike/results.json
+spike/videos.json
+
+# ============================================================
+# Editor / IDE
+# ============================================================
+.vscode/
+.idea/
+
+# ============================================================
+# OS
+# ============================================================
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# Claude Code — personal overrides only
+# ============================================================
+.claude/settings.local.json
+.claude/skills/.cache/
