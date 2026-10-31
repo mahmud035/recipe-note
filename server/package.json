@@ -8,6 +8,7 @@
     "build": "tsc && mkdir -p dist/modules/recipe/pdf/fonts && cp src/modules/recipe/pdf/fonts/NotoSansBengali.ttf dist/modules/recipe/pdf/fonts/NotoSansBengali.ttf",
     "start": "node --env-file=.env dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
     "extract": "node --env-file=.env scripts/run-extraction.ts"
   },
   "dependencies": {

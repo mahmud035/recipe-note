@@ -1,0 +1,73 @@
+name: CI
+
+# PR gate for main. Deliberately NOT path-filtered: these are required status checks, and a
+# required check whose workflow is filtered out never reports, leaving the PR stuck "pending".
+# Also callable (workflow_call) so deploy-server.yml can run the same checks before deploying.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+# Superseded PR runs are cancelled; runs invoked by the deploy workflow never are (that
+# workflow deliberately never cancels a deploy mid-flight).
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    env:
+      # CI only runs tsc + node:test — no Chrome needed (skips Chrome + chrome-headless-shell).
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The build script runs `tsc --noEmit` before `vite build`, so this is typecheck + build.
+      - name: Build
+        run: npm run build
